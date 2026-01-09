@@ -17,49 +17,60 @@ app.add_middleware(
 class QRRequest(BaseModel):
     qr_text: str
 
-# Mock Database
-SAFE_MERCHANTS = {
-    "starbucks@okhdfc": "Starbucks",
-    "grocery@upi": "Local Grocery",
-    "uber@hdfcbank": "Uber Rides"
+# --- DYNAMIC MERCHANT DATABASE (In-Memory Learning) ---
+# Starts with initial hardcoded data, but GROWS as new threats are found.
+dynamic_merchant_db = {
+    # Safe Merchants
+    "starbucks@okhdfc": {"trust_score": 98, "status": "Verified", "category": "Safe"},
+    "grocery@upi": {"trust_score": 90, "status": "Verified", "category": "Safe"},
+    "uber@hdfcbank": {"trust_score": 95, "status": "Verified", "category": "Safe"},
+    
+    # Known Fraud Merchants
+    "winner@paytm": {"trust_score": 0, "status": "Blacklisted", "category": "Fraud"},
+    "support@bank-verify": {"trust_score": 0, "status": "Blacklisted", "category": "Fraud"},
+    "refund@scammer": {"trust_score": 0, "status": "Blacklisted", "category": "Fraud"}
 }
 
-FRAUD_MERCHANTS = {
-    "winner@paytm": "Fake Lottery Scam",
-    "support@bank-verify": "Phishing Scam",
-    "refund@scammer": "Refund Fraud"
-}
-
-FRAUD_KEYWORDS = ["scam", "free", "lottery", "winner", "prize", "urgent"]
+FRAUD_KEYWORDS = ["scam", "free", "lottery", "winner", "prize", "urgent", "claim", "gift"]
 
 @app.post("/scan_qr")
 async def scan_qr(request: QRRequest):
-    qr_text = request.qr_text.lower()
+    qr_text = request.qr_text.lower() # Normalize to lowercase
     
-    # Check for direct fraud merchant match
-    if request.qr_text in FRAUD_MERCHANTS:
-        return {
-            "status": "FRAUD",
-            "score": 95,
-            "message": "High Risk Detected: Known Fraud Merchant"
-        }
-    
-    # Check for fraud keywords
+    # 1. CHECK DYNAMIC DATABASE FIRST
+    if request.qr_text in dynamic_merchant_db:
+        merchant = dynamic_merchant_db[request.qr_text]
+        if merchant["status"] == "Blacklisted":
+            return {
+                "status": "FRAUD",
+                "score": merchant["trust_score"],
+                "message": "High Risk: Known Blacklisted Merchant"
+            }
+        else:
+            return {
+                "status": "SAFE",
+                "score": merchant["trust_score"],
+                "message": f"Verified Safe: {merchant.get('category', 'Merchant')}"
+            }
+
+    # 2. DYNAMIC LEARNING: Check for suspicious patterns in NEW merchants
     for keyword in FRAUD_KEYWORDS:
         if keyword in qr_text:
-             return {
-                "status": "FRAUD",
-                "score": 95,
-                "message": f"High Risk Detected: Suspicious keyword '{keyword}' found"
+            # --- AUTO-UPDATE LOGIC ---
+            print(f"⚠️  New Threat Detected & Added to Blocklist: {request.qr_text}")
+            
+            # Add to Database dynamically
+            dynamic_merchant_db[request.qr_text] = {
+                "trust_score": 0, 
+                "status": "Blacklisted", 
+                "category": "Fraud"
             }
             
-    # Check if safe merchant
-    if request.qr_text in SAFE_MERCHANTS:
-         return {
-            "status": "SAFE",
-            "score": 10,
-            "message": "Verified Safe Merchant"
-        }
-
-    # Default safe (or unknown but low risk for this simple logic)
-    return {"status": "SAFE", "score": 10, "message": "Low Risk"}
+            return {
+                "status": "FRAUD",
+                "score": 0,
+                "message": f"High Risk Detected: Suspicious keyword '{keyword}' found (Database Updated)"
+            }
+            
+    # 3. DEFAULT SAFE (Unknown Merchant)
+    return {"status": "SAFE", "score": 80, "message": "Low Risk: Unknown Identity"}
