@@ -17,60 +17,92 @@ app.add_middleware(
 class QRRequest(BaseModel):
     qr_text: str
 
-# --- DYNAMIC MERCHANT DATABASE (In-Memory Learning) ---
-# Starts with initial hardcoded data, but GROWS as new threats are found.
-dynamic_merchant_db = {
-    # Safe Merchants
-    "starbucks@okhdfc": {"trust_score": 98, "status": "Verified", "category": "Safe"},
-    "grocery@upi": {"trust_score": 90, "status": "Verified", "category": "Safe"},
-    "uber@hdfcbank": {"trust_score": 95, "status": "Verified", "category": "Safe"},
-    
-    # Known Fraud Merchants
-    "winner@paytm": {"trust_score": 0, "status": "Blacklisted", "category": "Fraud"},
-    "support@bank-verify": {"trust_score": 0, "status": "Blacklisted", "category": "Fraud"},
-    "refund@scammer": {"trust_score": 0, "status": "Blacklisted", "category": "Fraud"}
-}
+# --- 3. DATABASE CONNECTION (SQLite - SmartShield) ---
+from database import get_merchant, add_merchant, get_all_merchants
 
-FRAUD_KEYWORDS = ["scam", "free", "lottery", "winner", "prize", "urgent", "claim", "gift"]
+FRAUD_KEYWORDS = ["scam", "free", "lottery", "winner", "prize", "urgent", "claim", "gift", "doubler", "investment"]
+
+@app.get("/merchants")
+async def get_merchants():
+    """Fetch all merchants for the dashboard."""
+    merchants = get_all_merchants()
+    return merchants
 
 @app.post("/scan_qr")
 async def scan_qr(request: QRRequest):
     qr_text = request.qr_text.lower() # Normalize to lowercase
     
-    # 1. CHECK DYNAMIC DATABASE FIRST
-    if request.qr_text in dynamic_merchant_db:
-        merchant = dynamic_merchant_db[request.qr_text]
-        if merchant["status"] == "Blacklisted":
-            return {
-                "status": "FRAUD",
-                "score": merchant["trust_score"],
-                "message": "High Risk: Known Blacklisted Merchant"
-            }
-        else:
+    # --- STEP 1: DATABASE CHECK (The "Bank" Verification) ---
+    merchant = get_merchant(qr_text)
+    
+    if merchant:
+        # A. WHITELIST CHECK (Trusted)
+        if merchant["trust_score"] == 100:
             return {
                 "status": "SAFE",
-                "score": merchant["trust_score"],
-                "message": f"Verified Safe: {merchant.get('category', 'Merchant')}"
-            }
-
-    # 2. DYNAMIC LEARNING: Check for suspicious patterns in NEW merchants
-    for keyword in FRAUD_KEYWORDS:
-        if keyword in qr_text:
-            # --- AUTO-UPDATE LOGIC ---
-            print(f"⚠️  New Threat Detected & Added to Blocklist: {request.qr_text}")
-            
-            # Add to Database dynamically
-            dynamic_merchant_db[request.qr_text] = {
-                "trust_score": 0, 
-                "status": "Blacklisted", 
-                "category": "Fraud"
+                "score": 100,
+                "message": f"SAFE - Verified Merchant: {merchant['legal_name']}"
             }
             
+        # B. BLACKLIST CHECK (Fraud)
+        elif merchant["trust_score"] == 0:
             return {
                 "status": "FRAUD",
                 "score": 0,
-                "message": f"High Risk Detected: Suspicious keyword '{keyword}' found (Database Updated)"
+                "message": f"DANGER - Known Fraud: {merchant['legal_name']}"
             }
             
-    # 3. DEFAULT SAFE (Unknown Merchant)
-    return {"status": "SAFE", "score": 80, "message": "Low Risk: Unknown Identity"}
+        # C. GRAYLIST (Neutral/Local Shops)
+        else:
+            return {
+                "status": "SAFE" if merchant["trust_score"] > 40 else "FRAUD",
+                "score": merchant["trust_score"],
+                "message": f"Merchant: {merchant['legal_name']} (Score: {merchant['trust_score']})"
+            }
+
+    # --- STEP 2: ML/HEURISTIC CHECK (Fallback for Unknowns) ---
+    # (If not in DB, analyze the text pattern)
+    is_suspicious = False
+    matched_keyword = ""
+    
+    for keyword in FRAUD_KEYWORDS:
+        if keyword in qr_text:
+            is_suspicious = True
+            matched_keyword = keyword
+            break
+            
+    if is_suspicious:
+        # Case A: Unknown but looks like Fraud -> Add to DB as Blacklist
+        print(f"⚠️  New Threat Detected: {request.qr_text}")
+        
+        add_merchant(
+            upi_id=request.qr_text,
+            legal_name="Suspicious Unknown ID",
+            trust_score=0,
+            category="Fraud",
+            is_verified=False
+        )
+        
+        return {
+            "status": "FRAUD",
+            "score": 0,
+            "message": f"DANGER - Suspicious keyword '{matched_keyword}' found."
+        }
+    else:
+        # Case B: Unknown and looks Clean -> Add as Neutral (Score 50)
+        # "Neutral" indicates we are tracking it, but haven't verified it yet.
+        print(f"ℹ️  New Unknown Merchant: {request.qr_text}")
+        
+        add_merchant(
+            upi_id=request.qr_text,
+            legal_name="Unknown Merchant",
+            trust_score=50,
+            category="Uncategorized",
+            is_verified=False
+        )
+        
+        return {
+            "status": "SAFE",
+            "score": 50,
+            "message": "SAFE - First time seen. Added to tracking."
+        }

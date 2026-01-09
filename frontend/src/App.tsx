@@ -43,15 +43,20 @@ const MOCK_RECENT_ACTIVITY = [
   { id: 3, type: 'block', message: 'Suspicious Keyword "Winner"', amount: 'N/A', time: '12 mins ago' },
 ];
 
-const merchantsData = [
-  { id: "M001", name: "Starbucks Corp", trust: 98, status: "Verified" },
-  { id: "M002", name: "Uber India", trust: 95, status: "Verified" },
-  { id: "M009", name: "Laxmi Chit Fund", trust: 10, status: "Blacklisted" },
-  { id: "M012", name: "Win_Lottery_X", trust: 5, status: "Blacklisted" }
-];
-
 function App() {
   const [view, setView] = useState<'dashboard' | 'scanner' | 'database' | 'settings' | 'map'>('dashboard');
+
+  // --- Live Database State ---
+  const [merchants, setMerchants] = useState<any[]>([]);
+
+  // Fetch Merchants when 'database' view is active
+  useEffect(() => {
+    if (view === 'database') {
+      axios.get(`${API_URL}/merchants`)
+        .then(res => setMerchants(res.data))
+        .catch(e => console.error("Failed to fetch merchants:", e));
+    }
+  }, [view]);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [isScanModalOpen, setIsScanModalOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -171,9 +176,9 @@ function App() {
     setScanResult(null);
   };
 
-  const filteredMerchants = merchantsData.filter(m =>
-    m.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    m.id.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredMerchants = merchants.filter(m =>
+    m.legal_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    m.upi_id?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
@@ -494,27 +499,29 @@ function App() {
                         </thead>
                         <tbody className="divide-y divide-slate-800">
                           {filteredMerchants.map((merchant) => (
-                            <tr key={merchant.id} className="hover:bg-slate-800/30 transition-colors">
-                              <td className="px-6 py-4 font-mono text-xs text-slate-500">{merchant.id}</td>
-                              <td className="px-6 py-4 font-bold text-slate-200">{merchant.name}</td>
+                            <tr key={merchant.upi_id} className="hover:bg-slate-800/30 transition-colors">
+                              <td className="px-6 py-4 font-mono text-xs text-slate-500">{merchant.upi_id}</td>
+                              <td className="px-6 py-4 font-bold text-slate-200">{merchant.legal_name}</td>
                               <td className="px-6 py-4">
                                 <div className="flex items-center gap-2">
                                   <div className="w-24 h-2 bg-slate-800 rounded-full overflow-hidden">
                                     <div
-                                      className={`h-full ${merchant.trust > 50 ? 'bg-emerald-500' : 'bg-red-500'}`}
-                                      style={{ width: `${merchant.trust}%` }}
+                                      className={`h-full ${merchant.trust_score > 50 ? 'bg-emerald-500' : 'bg-red-500'}`}
+                                      style={{ width: `${merchant.trust_score}%` }}
                                     ></div>
                                   </div>
-                                  <span className="font-mono text-xs">{merchant.trust}/100</span>
+                                  <span className="font-mono text-xs">{merchant.trust_score}/100</span>
                                 </div>
                               </td>
                               <td className="px-6 py-4">
-                                <span className={`inline-flex items-center gap-1.5 py-1 px-2.5 rounded-full text-xs font-bold border ${merchant.status === 'Verified'
+                                <span className={`inline-flex items-center gap-1.5 py-1 px-2.5 rounded-full text-xs font-bold border ${merchant.is_verified
                                   ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'
-                                  : 'bg-red-500/10 text-red-500 border-red-500/20'
+                                  : merchant.trust_score < 50
+                                    ? 'bg-red-500/10 text-red-500 border-red-500/20'
+                                    : 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20'
                                   }`}>
-                                  {merchant.status === 'Verified' ? <ShieldCheck className="w-3 h-3" /> : <ShieldAlert className="w-3 h-3" />}
-                                  {merchant.status.toUpperCase()}
+                                  {merchant.is_verified ? <ShieldCheck className="w-3 h-3" /> : <ShieldAlert className="w-3 h-3" />}
+                                  {merchant.is_verified ? 'VERIFIED' : merchant.trust_score < 50 ? 'BLACKLISTED' : 'UNVERIFIED'}
                                 </span>
                               </td>
                             </tr>
